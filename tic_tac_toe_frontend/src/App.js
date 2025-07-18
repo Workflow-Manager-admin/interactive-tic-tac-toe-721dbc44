@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import "./App.css";
-// Import OpenAI
-import { Configuration, OpenAIApi } from "openai";
+/* Import OpenAI SDK v4+ (uses 'OpenAI' class, no Configuration/OpenAIApi) */
+import OpenAI from "openai";
 
 /**
  * Color palette from requirements:
@@ -82,13 +82,11 @@ function App() {
   // OpenAI API key from environment
   const openAIApiKey = process.env.REACT_APP_OPENAI_API_KEY;
 
-  // Setup OpenAI client if key is available
+  // Setup OpenAI client if key is available (OpenAI SDK v4+)
   let openai = null;
   if (openAIApiKey) {
-    const configuration = new Configuration({
-      apiKey: openAIApiKey,
-    });
-    openai = new OpenAIApi(configuration);
+    openai = new OpenAI({ apiKey: openAIApiKey, dangerouslyAllowBrowser: true });
+    // 'dangerouslyAllowBrowser' is required for client-side usage (not recommended for production).
   }
 
   // Responsive check
