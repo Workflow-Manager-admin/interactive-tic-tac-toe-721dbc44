@@ -11,6 +11,19 @@ This project provides a minimal React template with a clean, modern UI and minim
 
 ## Getting Started
 
+---
+
+## OpenAI Integration - Environment Variable Required
+
+To enable Player vs Computer mode powered by OpenAI, you must add your OpenAI API key to the `.env` file in this directory:
+
+```
+REACT_APP_OPENAI_API_KEY=sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+```
+
+Restart the app after changing the .env file. If the API key is missing or invalid, the game will use a basic fallback AI.
+
+---
 In the project directory, you can run:
 
 ### `npm start`
