@@ -1,3 +1,20 @@
+/*
+  TIC TAC TOE APP: AI Move Fallback/Error Handling
+  ------------------------------------------------
+
+  - If REACT_APP_OPENAI_API_KEY (from .env) is set, attempts GPT-powered move for computer.
+  - If an error occurs (API/network/response/invalid move), a fallback AI picks the first available cell.
+  - User is notified via UI if fallback is used, with meaningful messages.
+  - If .env is missing or API key not supplied, always uses fallback AI with message.
+  - All error/fallback strategies are clearly documented near their logic in the code.
+
+  Requirements: 
+    - Do not hardcode sensitive values. Read REACT_APP_OPENAI_API_KEY from process.env.
+    - Do not block the user if AI fails; always provide a next step/fallback.
+    - Keep user notified if AI is not "smart" or if OpenAI service is failing.
+
+*/
+
 import React, { useState, useEffect } from "react";
 import "./App.css";
 /* Import OpenAI SDK v4+ (uses 'OpenAI' class, no Configuration/OpenAIApi) */
@@ -79,10 +96,12 @@ function App() {
   const [error, setError] = useState(""); // OpenAI error state
   const [aiThinking, setAiThinking] = useState(false);
 
-  // OpenAI API key from environment
+  // OpenAI API key from environment (.env). If missing, fallback AI is used.
+  // IMPORTANT: Do not hardcode this! This value must be set in the .env file as REACT_APP_OPENAI_API_KEY
   const openAIApiKey = process.env.REACT_APP_OPENAI_API_KEY;
 
   // Setup OpenAI client if key is available (OpenAI SDK v4+)
+  // The client is created only if the key exists, otherwise fallback is always used.
   let openai = null;
   if (openAIApiKey) {
     openai = new OpenAI({ apiKey: openAIApiKey, dangerouslyAllowBrowser: true });
@@ -120,34 +139,48 @@ function App() {
     async function doAIMove() {
       setAiThinking(true);
       setError(""); // Clear any previous error
+
       // If OpenAI API key is set, use GPT, else fallback
       if (openai) {
         try {
           const move = await getOpenAIMove(board);
+          // If GPT gave invalid move, fallback to random
           if (
             !move ||
             move.length !== 2 ||
             board[move[0]][move[1]]
           ) {
-            // If GPT gave invalid, fallback to random
+            setError("AI gave an invalid move, using fallback.");
             let fallback = findBestMove(board);
             if (fallback) {
               handleCellClick(fallback[0], fallback[1], true);
+            } else {
+              setError("No moves available for AI."); // Should not happen if the UI is correct
             }
           } else {
             handleCellClick(move[0], move[1], true);
           }
         } catch (e) {
-          setError("AI move failed, using fallback.");
+          // Graceful fallback: if OpenAI fails, fallback AI is used, show message
+          setError("AI move failed, using fallback. (" + (e?.message || "Unknown error") + ")");
           let fallback = findBestMove(board);
           if (fallback) {
             handleCellClick(fallback[0], fallback[1], true);
+          } else {
+            setError("No fallback moves available for AI.");
           }
         }
       } else {
-        // Fallback: pick first move if no API key
-        let [i, j] = findBestMove(board);
-        handleCellClick(i, j, true);
+        // Fallback: pick first move if no API key, show message if the key is truly missing
+        if (!openAIApiKey) {
+          setError("OpenAI key not found: using fallback computer AI.");
+        }
+        let fallback = findBestMove(board);
+        if (fallback) {
+          handleCellClick(fallback[0], fallback[1], true);
+        } else {
+          setError("No fallback moves available for AI.");
+        }
       }
       setAiThinking(false);
     }
