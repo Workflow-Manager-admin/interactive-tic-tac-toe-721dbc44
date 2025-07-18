@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import "./App.css";
+// Import OpenAI
+import { Configuration, OpenAIApi } from "openai";
 
 /**
  * Color palette from requirements:
@@ -51,9 +53,6 @@ function calculateWinner(board) {
 
 // Picks the first available cell (easy AI)
 function findBestMove(board) {
-  // Try to win, block, or pick first empty
-  // Prefer center, then corners, then sides
-  // For simplicity, just random empty for now. Can be improved.
   for (let i=0;i<3;i++) {
     for (let j=0;j<3;j++) {
       if (!board[i][j]) {
@@ -66,11 +65,6 @@ function findBestMove(board) {
 
 // PUBLIC_INTERFACE
 function App() {
-  // ENVIRONMENT VARIABLE SUPPORT
-  // Example usage (ignore if .env does not have relevant vars):
-  // const apiUrl = process.env.REACT_APP_BACKEND_URL;
-  // For this task, the game runs entirely frontend.
-
   // Game state
   const [board, setBoard] = useState(createEmptyBoard());
   const [isXNext, setIsXNext] = useState(true);
@@ -82,6 +76,20 @@ function App() {
   const [status, setStatus] = useState("");
   const [winningLine, setWinningLine] = useState(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 700);
+  const [error, setError] = useState(""); // OpenAI error state
+  const [aiThinking, setAiThinking] = useState(false);
+
+  // OpenAI API key from environment
+  const openAIApiKey = process.env.REACT_APP_OPENAI_API_KEY;
+
+  // Setup OpenAI client if key is available
+  let openai = null;
+  if (openAIApiKey) {
+    const configuration = new Configuration({
+      apiKey: openAIApiKey,
+    });
+    openai = new OpenAIApi(configuration);
+  }
 
   // Responsive check
   useEffect(() => {
@@ -111,17 +119,47 @@ function App() {
 
   // If it's PvC mode, O is computer, let computer play after human X move
   useEffect(() => {
+    async function doAIMove() {
+      setAiThinking(true);
+      setError(""); // Clear any previous error
+      // If OpenAI API key is set, use GPT, else fallback
+      if (openai) {
+        try {
+          const move = await getOpenAIMove(board);
+          if (
+            !move ||
+            move.length !== 2 ||
+            board[move[0]][move[1]]
+          ) {
+            // If GPT gave invalid, fallback to random
+            let fallback = findBestMove(board);
+            if (fallback) {
+              handleCellClick(fallback[0], fallback[1], true);
+            }
+          } else {
+            handleCellClick(move[0], move[1], true);
+          }
+        } catch (e) {
+          setError("AI move failed, using fallback.");
+          let fallback = findBestMove(board);
+          if (fallback) {
+            handleCellClick(fallback[0], fallback[1], true);
+          }
+        }
+      } else {
+        // Fallback: pick first move if no API key
+        let [i, j] = findBestMove(board);
+        handleCellClick(i, j, true);
+      }
+      setAiThinking(false);
+    }
+
     if (
       mode === "pvc" &&
       !calculateWinner(board) &&
       !isXNext // O's turn, computer's turn
     ) {
-      const timer = setTimeout(() => {
-        // Very basic AI: pick first available
-        let [i, j] = findBestMove(board);
-        handleCellClick(i, j, true);
-      }, 500);
-      return () => clearTimeout(timer);
+      doAIMove();
     }
     // eslint-disable-next-line
   }, [isXNext, board, mode]);
@@ -167,6 +205,8 @@ function App() {
     setStep(0);
     setStatus("Next: X");
     setWinningLine(null);
+    setError("");
+    setAiThinking(false);
   }
 
   // PUBLIC_INTERFACE
@@ -178,6 +218,58 @@ function App() {
   // Styling for the winning cell
   function isWinningCell(row, col) {
     return winningLine && winningLine.some(([r, c]) => r === row && c === col);
+  }
+
+  // PUBLIC_INTERFACE
+  /**
+   * Get move from OpenAI by sending current board state.
+   * Returns a Promise that resolves to [row, col] or null.
+   */
+  async function getOpenAIMove(currentBoard) {
+    // Prepare prompt to tell GPT to act as an unbeatable Tic Tac Toe player
+    // Give the board as a string, ask for [row, col]
+    const displayBoard = (b) => b.map(r => r.map(c => c || "-").join("")).join("\n");
+    const prompt = `
+You are a perfect Tic Tac Toe player called "AI". You play as "O". The board is a 3x3 grid, indexed from 0 (top-left) to 2 (bottom-right).
+Given the board state, output the next best move as a JSON array [row, col] that refers to an empty cell.
+Do not output anything else.
+Board state (X=human, O=you, '-'=empty):
+
+${displayBoard(currentBoard)}
+
+It is your turn. Output only the next move as JSON array [row, col].
+`;
+
+    const completion = await openai.createChatCompletion({
+      model: "gpt-3.5-turbo",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 10,
+      temperature: 0.2,
+    });
+    if (
+      completion &&
+      completion.data &&
+      completion.data.choices &&
+      completion.data.choices[0] &&
+      completion.data.choices[0].message &&
+      typeof completion.data.choices[0].message.content === "string"
+    ) {
+      // Extract move from response, expected: [row,col]
+      let raw = completion.data.choices[0].message.content.trim();
+      try {
+        // Sometimes model outputs text before the json, try to extract JSON array [row, col]
+        const match = raw.match(/\[ *\d+ *, *\d+ *\]/);
+        if (match) {
+          return JSON.parse(match[0]);
+        }
+        if (raw.startsWith("[")) {
+          return JSON.parse(raw);
+        }
+      } catch (_e) {
+        return null;
+      }
+    }
+    return null;
   }
 
   // Colors
@@ -273,9 +365,7 @@ function App() {
                   userSelect: "none"
                 }}
                 disabled={!!cell || !!calculateWinner(board)}
-                aria-label={`Cell ${rIdx + 1},${cIdx + 1}${
-                  cell ? `: ${cell}` : ""
-                }`}
+                aria-label={`Cell ${rIdx + 1},${cIdx + 1}${cell ? `: ${cell}` : ""}`}
               >
                 {cell}
               </button>
@@ -328,26 +418,38 @@ function App() {
 
   function renderStatusBar() {
     return (
-      <div
-        className="ttt-status"
-        style={{
-          textAlign: "center",
-          margin: isMobile ? "14px 0 2vw 0" : "18px 0 20px 0",
-          minHeight: "1.5rem",
-          fontWeight: 600,
-          color:
-            status === "Draw!"
-              ? COLORS.accent
-              : status.startsWith("Winner")
-              ? COLORS.secondary
-              : COLORS.primary,
-          fontSize: isMobile ? "1.22rem" : "1.39rem",
-          letterSpacing: "0.3px"
-        }}
-        aria-live="assertive"
-      >
-        {status}
-      </div>
+      <>
+        <div
+          className="ttt-status"
+          style={{
+            textAlign: "center",
+            margin: isMobile ? "14px 0 2vw 0" : "18px 0 20px 0",
+            minHeight: "1.5rem",
+            fontWeight: 600,
+            color:
+              status === "Draw!"
+                ? COLORS.accent
+                : status.startsWith("Winner")
+                ? COLORS.secondary
+                : COLORS.primary,
+            fontSize: isMobile ? "1.22rem" : "1.39rem",
+            letterSpacing: "0.3px"
+          }}
+          aria-live="assertive"
+        >
+          {status}
+          {aiThinking && mode === "pvc" && !calculateWinner(board) ? (
+            <span style={{ marginLeft: 12, color: COLORS.accent, fontSize: "1rem" }}>
+              AI Thinking...
+            </span>
+          ) : null}
+        </div>
+        {error && (
+          <div style={{ color: COLORS.accent, fontWeight: 500, fontSize: isMobile ? "1rem" : "1.07rem" }}>
+            {error}
+          </div>
+        )}
+      </>
     );
   }
 
